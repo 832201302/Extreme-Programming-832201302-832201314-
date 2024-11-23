@@ -1,0 +1,171 @@
+from flask import Flask, request, jsonify
+from flask_sqlalchemy import SQLAlchemy
+
+# 初始化 Flask 应用
+app = Flask(__name__)
+
+# 配置数据库（使用 SQLite 数据库）
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///contacts_with_bookmarks.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+# 初始化数据库
+db = SQLAlchemy(app)
+
+# 数据库模型 - 联系人
+class Contact(db.Model):
+    __tablename__ = 'contacts'
+    id = db.Column(db.Integer, primary_key=True)  # 主键
+    name = db.Column(db.String(100), nullable=False)  # 联系人姓名
+    is_bookmarked = db.Column(db.Boolean, default=False)  # 是否被标记为收藏
+    details = db.relationship('ContactDetail', backref='contact', cascade='all, delete-orphan', lazy=True)
+    # 关联的详情表，启用级联删除
+
+# 数据库模型 - 联系人详细信息
+class ContactDetail(db.Model):
+    __tablename__ = 'contact_details'
+    id = db.Column(db.Integer, primary_key=True)  # 主键
+    contact_id = db.Column(db.Integer, db.ForeignKey('contacts.id'), nullable=False)  # 外键，指向联系人表
+    detail_type = db.Column(db.String(50), nullable=False)  # 联系方式类型，例如电话、邮箱
+    detail_value = db.Column(db.String(255), nullable=False)  # 联系方式的值
+
+# API 路由 - 创建联系人
+@app.route('/contacts', methods=['POST'])
+def create_contact():
+    """
+    创建新的联系人，支持添加多种联系方式。
+    请求体 JSON 格式：
+    {
+        "name": "John Doe",
+        "details": [
+            {"type": "phone", "value": "123-456-7890"},
+            {"type": "email", "value": "john@example.com"}
+        ]
+    }
+    """
+    data = request.get_json()
+    name = data.get('name')
+    details = data.get('details', [])
+
+    if not name:
+        return jsonify({"error": "Name is required"}), 400
+
+    # 创建联系人对象并添加详情
+    contact = Contact(name=name)
+    for detail in details:
+        detail_type = detail.get('type')
+        detail_value = detail.get('value')
+        if detail_type and detail_value:
+            contact.details.append(ContactDetail(detail_type=detail_type, detail_value=detail_value))
+
+    # 保存到数据库
+    db.session.add(contact)
+    db.session.commit()
+    return jsonify({"message": "Contact created successfully", "id": contact.id}), 201
+
+# API 路由 - 获取联系人
+@app.route('/contacts/<int:contact_id>', methods=['GET'])
+def get_contact(contact_id):
+    """
+    根据联系人 ID 获取详细信息。
+    响应示例：
+    {
+        "id": 1,
+        "name": "John Doe",
+        "is_bookmarked": false,
+        "details": [
+            {"type": "phone", "value": "123-456-7890"},
+            {"type": "email", "value": "john@example.com"}
+        ]
+    }
+    """
+    contact = Contact.query.get_or_404(contact_id)
+    return jsonify({
+        "id": contact.id,
+        "name": contact.name,
+        "is_bookmarked": contact.is_bookmarked,
+        "details": [
+            {"type": detail.detail_type, "value": detail.detail_value}
+            for detail in contact.details
+        ]
+    })
+
+# API 路由 - 标记或取消标记联系人为收藏
+@app.route('/contacts/<int:contact_id>/bookmark', methods=['PUT'])
+def bookmark_contact(contact_id):
+    """
+    标记联系人为收藏或取消收藏。
+    请求体 JSON 格式：
+    {
+        "is_bookmarked": true
+    }
+    响应示例：
+    {
+        "message": "Contact successfully bookmarked"
+    }
+    """
+    contact = Contact.query.get_or_404(contact_id)
+    data = request.get_json()
+    is_bookmarked = data.get('is_bookmarked')
+
+    # 验证输入参数
+    if is_bookmarked is None:
+        return jsonify({"error": "is_bookmarked field is required"}), 400
+
+    # 更新收藏状态
+    contact.is_bookmarked = is_bookmarked
+    db.session.commit()
+    status = "bookmarked" if is_bookmarked else "unbookmarked"
+    return jsonify({"message": f"Contact successfully {status}"})
+
+# API 路由 - 获取所有收藏的联系人
+@app.route('/contacts/bookmarked', methods=['GET'])
+def get_bookmarked_contacts():
+    """
+    获取所有已标记为收藏的联系人。
+    响应示例：
+    [
+        {
+            "id": 1,
+            "name": "John Doe",
+            "is_bookmarked": true,
+            "details": [
+                {"type": "phone", "value": "123-456-7890"}
+            ]
+        }
+    ]
+    """
+    contacts = Contact.query.filter_by(is_bookmarked=True).all()
+    return jsonify([
+        {
+            "id": contact.id,
+            "name": contact.name,
+            "is_bookmarked": contact.is_bookmarked,
+            "details": [
+                {"type": detail.detail_type, "value": detail.detail_value}
+                for detail in contact.details
+            ]
+        }
+        for contact in contacts
+    ])
+
+# API 路由 - 删除联系人
+@app.route('/contacts/<int:contact_id>', methods=['DELETE'])
+def delete_contact(contact_id):
+    """
+    删除指定联系人及其所有详细信息。
+    响应示例：
+    {
+        "message": "Contact deleted successfully"
+    }
+    """
+    contact = Contact.query.get_or_404(contact_id)
+    db.session.delete(contact)
+    db.session.commit()
+    return jsonify({"message": "Contact deleted successfully"})
+
+# 初始化数据库
+with app.app_context():
+    db.create_all()
+
+if __name__ == '__main__':
+    app.run(debug=True)
