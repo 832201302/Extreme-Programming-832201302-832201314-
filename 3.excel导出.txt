@@ -1,0 +1,50 @@
+from spire.xls import *
+from spire.xls.common import *
+import sqlite3
+
+# 连接到数据库
+conn = sqlite3.connect("output/CompanyInfo.db")
+cursor = conn.cursor()
+
+# 获取数据库中所有的表名
+cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+tableNames = [name[0] for name in cursor.fetchall()]
+
+# 创建 Excel 文件
+workbook = Workbook()
+workbook.Worksheets.Clear()
+
+# 遍历数据库中的每个表
+for tableName in tableNames:
+    # 获取表的列名
+    cursor.execute(f"PRAGMA table_info('{tableName}')")
+    columnsInfo = cursor.fetchall()
+    columnNames = [columnInfo[1] for columnInfo in columnsInfo]
+
+    # 获取表的数据
+    cursor.execute(f"SELECT * FROM {tableName}")
+    rows = cursor.fetchall()
+    
+    # 创建工作表
+    sheet = workbook.Worksheets.Add(tableName)
+    
+    # 将标题行写入工作表
+    for i in range(len(columnNames)):
+        sheet.Range[1, i + 1].Value = columnNames[i]
+    
+    # 将数据写入工作表
+    for j in range(1, len(rows)):
+        column = rows[j]
+        for k in range(len(column)):
+            sheet.Range[j + 1, k + 1].Value = column[k]
+    
+    # 设置工作表格式
+    sheet.AllocatedRange.Style.Font.FontName = "Times New Roman"
+    sheet.AllocatedRange.Style.Font.Size = 12.0
+    sheet.AllocatedRange.AutoFitRows()
+    sheet.AllocatedRange.AutoFitColumns()
+
+# 保存 Excel 文件
+workbook.SaveToFile("output/DatabaseToExcel.xlsx", FileFormat.Version2016)
+workbook.Dispose()
+conn.close()
